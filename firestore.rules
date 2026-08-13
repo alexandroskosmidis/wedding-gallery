@@ -1,0 +1,24 @@
+rules_version = '2';
+
+service cloud.firestore {
+  match /databases/{database}/documents {
+    match /photos/{photoId} {
+      allow read: if true;
+
+      allow create: if request.resource.data.keys().hasOnly(
+          ['imageUrl', 'storagePath', 'caption', 'time', 'likes']
+        )
+        && request.resource.data.imageUrl is string
+        && request.resource.data.storagePath is string
+        && (request.resource.data.caption == null || request.resource.data.caption is string)
+        && request.resource.data.time == request.time
+        && request.resource.data.likes == 0;
+
+      // Only the like counter can be changed after creation.
+      allow update: if request.resource.data.diff(resource.data).affectedKeys().hasOnly(['likes'])
+        && request.resource.data.likes is int;
+
+      allow delete: if false;
+    }
+  }
+}
