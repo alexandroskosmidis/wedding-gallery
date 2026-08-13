@@ -1,4 +1,4 @@
-import { initializeApp } from "firebase/app";
+import { initializeApp, getApps, getApp } from "firebase/app";
 import { getFirestore } from "firebase/firestore";
 import { getStorage } from "firebase/storage";
 
@@ -13,7 +13,7 @@ const firebaseConfig = {
 };
 
 // Αρχικοποίηση του Firebase
-const app = initializeApp(firebaseConfig);
+const app = !getApps().length ? initializeApp(firebaseConfig) : getApp();
 
 // Εξαγωγή των εργαλείων για να τα χρησιμοποιήσουμε στα components μας
 export const db = getFirestore(app);
