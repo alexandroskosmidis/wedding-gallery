@@ -16,6 +16,11 @@ const nextConfig: NextConfig = {
         hostname: "firebasestorage.googleapis.com",
         pathname: "/v0/b/wedding-gallery-5181c.firebasestorage.app/o/**",
       },
+      {
+        protocol: "https",
+        hostname: "choashaysnhquhukoryd.supabase.co",
+        pathname: "/storage/v1/object/public/photos/**",
+      },
     ],
   },
 };

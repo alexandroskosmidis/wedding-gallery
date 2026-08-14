@@ -1,50 +1,65 @@
-import {
-  collection,
-  doc,
-  increment,
-  onSnapshot,
-  orderBy,
-  query,
-  serverTimestamp,
-  setDoc,
-  updateDoc,
-  type Timestamp,
-} from "firebase/firestore";
-import { getDownloadURL, ref, uploadBytes } from "firebase/storage";
-
-import { db, storage } from "@/firebase";
+import { supabase } from "@/supabase";
 
 export type Photo = {
   id: string;
   imageUrl: string;
   storagePath: string;
   caption: string | null;
-  time: Timestamp | null;
+  time: string | null;
   likes: number;
   width: number | null;
   height: number | null;
 };
 
-const photosQuery = query(collection(db, "photos"), orderBy("time", "desc"));
+type PhotoRow = {
+  id: string;
+  image_url: string;
+  storage_path: string;
+  caption: string | null;
+  created_at: string;
+  likes: number;
+  width: number | null;
+  height: number | null;
+};
+
+function mapRow(row: PhotoRow): Photo {
+  return {
+    id: row.id,
+    imageUrl: row.image_url,
+    storagePath: row.storage_path,
+    caption: row.caption,
+    time: row.created_at,
+    likes: row.likes,
+    width: row.width,
+    height: row.height,
+  };
+}
 
 export function subscribeToPhotos(onChange: (photos: Photo[]) => void) {
-  return onSnapshot(photosQuery, (snapshot) => {
-    onChange(
-      snapshot.docs.map((docSnap) => {
-        const data = docSnap.data();
-        return {
-          id: docSnap.id,
-          imageUrl: data.imageUrl as string,
-          storagePath: data.storagePath as string,
-          caption: (data.caption as string | undefined) ?? null,
-          time: (data.time as Timestamp | undefined) ?? null,
-          likes: (data.likes as number | undefined) ?? 0,
-          width: (data.width as number | undefined) ?? null,
-          height: (data.height as number | undefined) ?? null,
-        };
-      }),
-    );
-  });
+  let cancelled = false;
+
+  const load = async () => {
+    const { data, error } = await supabase
+      .from("photos")
+      .select("*")
+      .order("created_at", { ascending: false });
+
+    if (!cancelled && !error && data) {
+      onChange((data as PhotoRow[]).map(mapRow));
+    }
+  };
+
+  load();
+
+  const channel = supabase
+    .channel("photos-changes")
+    .on("postgres_changes", { event: "*", schema: "public", table: "photos" }, load)
+    .subscribe();
+
+  return () => {
+    cancelled = true;
+    supabase.removeChannel(channel);
+  };
 }
 
 async function getImageDimensions(file: File): Promise<{ width: number; height: number } | null> {
@@ -59,36 +74,41 @@ async function getImageDimensions(file: File): Promise<{ width: number; height: 
 }
 
 export async function uploadPhoto(file: File) {
-  const photoRef = doc(collection(db, "photos"));
-  const storagePath = `photos/${photoRef.id}-${file.name}`;
-
   const dimensions = await getImageDimensions(file);
+  const storagePath = `${Date.now()}-${Math.random().toString(36).slice(2)}-${file.name}`;
 
-  await uploadBytes(ref(storage, storagePath), file);
-  const imageUrl = await getDownloadURL(ref(storage, storagePath));
+  const { error: uploadError } = await supabase.storage.from("photos").upload(storagePath, file);
+  if (uploadError) throw uploadError;
+
+  const {
+    data: { publicUrl },
+  } = supabase.storage.from("photos").getPublicUrl(storagePath);
+
   const caption = file.name.replace(/\.[^.]+$/, "") || null;
 
-  await setDoc(photoRef, {
-    imageUrl,
-    storagePath,
+  const { error: insertError } = await supabase.from("photos").insert({
+    image_url: publicUrl,
+    storage_path: storagePath,
     caption,
-    time: serverTimestamp(),
     likes: 0,
     width: dimensions?.width ?? null,
     height: dimensions?.height ?? null,
   });
+  if (insertError) throw insertError;
 }
 
 export async function setPhotoLiked(photoId: string, liked: boolean) {
-  await updateDoc(doc(db, "photos", photoId), {
-    likes: increment(liked ? 1 : -1),
+  const { error } = await supabase.rpc("increment_likes", {
+    photo_id: photoId,
+    delta: liked ? 1 : -1,
   });
+  if (error) throw error;
 }
 
-export function formatRelativeTime(time: Timestamp | null): string {
+export function formatRelativeTime(time: string | null): string {
   if (!time) return "Just now";
 
-  const seconds = Math.floor((Date.now() - time.toMillis()) / 1000);
+  const seconds = Math.floor((Date.now() - new Date(time).getTime()) / 1000);
   if (seconds < 45) return "Just now";
 
   const minutes = Math.floor(seconds / 60);
@@ -102,9 +122,9 @@ export function formatRelativeTime(time: Timestamp | null): string {
 }
 
 // Remembers which photos this browser has liked, so refreshing the page
-// doesn't let someone re-like (and the shared Firestore counter can't be
-// bumped by accident). Exposed as an external store so components can read
-// it with useSyncExternalStore instead of syncing it into state via an effect.
+// doesn't let someone re-like (and the shared counter can't be bumped by
+// accident). Exposed as an external store so components can read it with
+// useSyncExternalStore instead of syncing it into state via an effect.
 const LIKED_PHOTOS_KEY = "wedding-gallery:liked-photos";
 const emptyLikedPhotos = new Set<string>();
 const likedPhotosListeners = new Set<() => void>();
