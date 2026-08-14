@@ -2,13 +2,13 @@ import type { Metadata } from "next";
 import { Gallery } from "@/components/gallery";
 
 export const metadata: Metadata = {
-  title: "Maria & Alexis — Shared Moments",
+  title: "Hlias & Katerina — Shared Moments",
   description:
-    "A shared wedding photo gallery for Maria & Alexis. Capture and relive the moments.",
+    "A shared wedding photo gallery for Hlias & Katerina. Capture and relive the moments.",
   openGraph: {
-    title: "Maria & Alexis — Shared Moments",
+    title: "Hlias & Katerina — Shared Moments",
     description:
-      "A shared wedding photo gallery for Maria & Alexis. Capture and relive the moments.",
+      "A shared wedding photo gallery for Hlias & Katerina. Capture and relive the moments.",
     type: "website",
   },
   twitter: {
