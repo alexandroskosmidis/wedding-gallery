@@ -6,13 +6,15 @@ service cloud.firestore {
       allow read: if true;
 
       allow create: if request.resource.data.keys().hasOnly(
-          ['imageUrl', 'storagePath', 'caption', 'time', 'likes']
+          ['imageUrl', 'storagePath', 'caption', 'time', 'likes', 'width', 'height']
         )
         && request.resource.data.imageUrl is string
         && request.resource.data.storagePath is string
         && (request.resource.data.caption == null || request.resource.data.caption is string)
         && request.resource.data.time == request.time
-        && request.resource.data.likes == 0;
+        && request.resource.data.likes == 0
+        && (request.resource.data.width == null || request.resource.data.width is number)
+        && (request.resource.data.height == null || request.resource.data.height is number);
 
       // Only the like counter can be changed after creation.
       allow update: if request.resource.data.diff(resource.data).affectedKeys().hasOnly(['likes'])

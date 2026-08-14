@@ -11,6 +11,7 @@ import {
 } from "react";
 import useEmblaCarousel from "embla-carousel-react";
 import { Heart, Camera, ImagePlus, Loader2, X } from "lucide-react";
+import Image from "next/image";
 import { toast } from "sonner";
 
 import { useDoubleTap } from "@/hooks/use-double-tap";
@@ -28,8 +29,16 @@ import {
 
 const MAX_FILES_PER_UPLOAD = 10;
 
+type DisplayPhoto = Photo & { pending?: boolean };
+
+type PendingUpload = {
+  tempId: string;
+  blobUrl: string;
+};
+
 export function Gallery() {
   const [photos, setPhotos] = useState<Photo[]>([]);
+  const [pendingUploads, setPendingUploads] = useState<PendingUpload[]>([]);
   const [loaded, setLoaded] = useState(false);
   const liked = useSyncExternalStore(
     subscribeLikedPhotos,
@@ -71,6 +80,20 @@ export function Gallery() {
       });
   };
 
+  // Shows the picked photo in the grid immediately via a local blob URL, while
+  // the real upload happens in the background. The placeholder is removed once
+  // the upload settles — the real photo takes over via the Firestore listener.
+  const startOptimisticUpload = (file: File, id: string) => {
+    const tempId = `pending-${id}`;
+    const blobUrl = URL.createObjectURL(file);
+    setPendingUploads((prev) => [...prev, { tempId, blobUrl }]);
+
+    return uploadWithToast(file, id).finally(() => {
+      setPendingUploads((prev) => prev.filter((p) => p.tempId !== tempId));
+      URL.revokeObjectURL(blobUrl);
+    });
+  };
+
   // Camera always captures a single photo, so it gets the blocking "uploading" state.
   const handleCameraFile = (e: ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
@@ -78,7 +101,7 @@ export function Gallery() {
     if (!file) return;
 
     setUploading(true);
-    uploadWithToast(file, "camera-upload").finally(() => {
+    startOptimisticUpload(file, "camera-upload").finally(() => {
       setUploading(false);
     });
   };
@@ -95,16 +118,33 @@ export function Gallery() {
     }
 
     selected.forEach((file, i) => {
-      uploadWithToast(file, `upload-${i}-${file.name}`);
+      startOptimisticUpload(file, `upload-${i}-${file.name}`);
     });
   };
+
+  const displayPhotos: DisplayPhoto[] = [
+    ...pendingUploads.map(
+      (p): DisplayPhoto => ({
+        id: p.tempId,
+        imageUrl: p.blobUrl,
+        storagePath: "",
+        caption: null,
+        time: null,
+        likes: 0,
+        width: null,
+        height: null,
+        pending: true,
+      }),
+    ),
+    ...photos,
+  ];
 
   return (
     <div className="min-h-screen bg-background text-foreground">
       <div className="mx-auto flex min-h-screen w-full max-w-lg flex-col">
         {/* Hero */}
         <div className="relative h-72 w-full shrink-0 overflow-hidden">
-          <img src="/hero-photo.jpg" alt="" className="h-full w-full object-cover" />
+          <Image src="/hero-photo.jpg" alt="" fill priority className="object-cover" />
           <div className="absolute inset-0 bg-linear-to-b from-transparent from-40% to-background" />
         </div>
         <div className="px-5 pb-2 pt-5 text-center">
@@ -123,7 +163,7 @@ export function Gallery() {
             onCamera={() => cameraInputRef.current?.click()}
             onGallery={() => galleryInputRef.current?.click()}
           />
-          {loaded && photos.length === 0 ? (
+          {loaded && displayPhotos.length === 0 ? (
             <p className="py-10 text-center text-sm text-muted-foreground">
               No moments yet — be the first to share one.
             </p>
@@ -133,7 +173,7 @@ export function Gallery() {
                 Τα τελευταία μας στιγμιότυπα
               </p>
               <div className="-mx-4 grid grid-cols-3 gap-0.5">
-                {photos.map((item, i) => (
+                {displayPhotos.map((item, i) => (
                   <PhotoCard
                     key={item.id}
                     item={item}
@@ -165,9 +205,9 @@ export function Gallery() {
         />
       </div>
 
-      {lightboxIndex !== null && photos[lightboxIndex] && (
+      {lightboxIndex !== null && displayPhotos[lightboxIndex] && (
         <Lightbox
-          items={photos}
+          items={displayPhotos}
           index={lightboxIndex}
           liked={liked}
           onLike={toggleLike}
@@ -235,17 +275,13 @@ function Lightbox({
   onClose: () => void;
 }) {
   const item = items[index]!;
-  const touchStartRef = useRef<{ x: number; y: number } | null>(null);
-  const draggingRef = useRef(false);
-  const [dragY, setDragY] = useState(0);
-  const [isDragging, setIsDragging] = useState(false);
   const [particles, setParticles] = useState<ReactionParticle[]>([]);
   const particleIdRef = useRef(0);
   const [emblaRef, emblaApi] = useEmblaCarousel({
     loop: false,
     align: "center",
     startIndex: index,
-    duration: 180,
+    duration: 25,
   });
 
   useEffect(() => {
@@ -294,51 +330,7 @@ function Lightbox({
   };
 
   return (
-    <div
-      className="fixed inset-0 z-50 flex flex-col bg-background"
-      role="dialog"
-      aria-modal="true"
-      style={{
-        transform: dragY > 0 ? `translateY(${dragY}px)` : undefined,
-        opacity: dragY > 0 ? Math.max(1 - dragY / 400, 0.3) : 1,
-        transition: isDragging ? "none" : "transform 250ms ease-out, opacity 250ms ease-out",
-      }}
-      onTouchStart={(e) => {
-        const t = e.touches[0];
-        touchStartRef.current = t ? { x: t.clientX, y: t.clientY } : null;
-        draggingRef.current = false;
-      }}
-      onTouchMove={(e) => {
-        const start = touchStartRef.current;
-        const t = e.touches[0];
-        if (!start || !t) return;
-
-        const dx = t.clientX - start.x;
-        const dy = t.clientY - start.y;
-
-        if (!draggingRef.current) {
-          if (Math.abs(dy) < 10 || Math.abs(dy) <= Math.abs(dx)) return;
-          draggingRef.current = true;
-          setIsDragging(true);
-        }
-
-        setDragY(Math.max(dy, 0));
-      }}
-      onTouchEnd={() => {
-        touchStartRef.current = null;
-        setIsDragging(false);
-
-        if (draggingRef.current && dragY > 120) {
-          draggingRef.current = false;
-          setDragY(typeof window === "undefined" ? 800 : window.innerHeight);
-          setTimeout(onClose, 220);
-          return;
-        }
-
-        draggingRef.current = false;
-        setDragY(0);
-      }}
-    >
+    <div className="fixed inset-0 z-50 flex flex-col bg-background" role="dialog" aria-modal="true">
       <div className="pointer-events-none fixed inset-0 z-[60] overflow-hidden">
         {particles.map((p) => (
           <span
@@ -424,9 +416,12 @@ function LightboxSlide({ item, liked, onLike }: { item: Photo; liked: boolean; o
   return (
     <div className="flex h-full min-w-0 flex-[0_0_100%] items-center justify-center px-4">
       <div className="relative" onClick={handleTap}>
-        <img
+        <Image
           src={item.imageUrl}
           alt={item.caption ?? "Shared moment"}
+          width={item.width ?? 1200}
+          height={item.height ?? 1200}
+          sizes="100vw"
           className="max-h-[calc(100vh-160px)] max-w-full select-none rounded-2xl object-contain shadow-[0_30px_80px_-40px_oklch(0.24_0.012_60_/_70%)]"
         />
         {burstId !== null && (
@@ -478,7 +473,7 @@ function PhotoCard({
   onLike,
   onOpen,
 }: {
-  item: Photo;
+  item: DisplayPhoto;
   liked: boolean;
   onLike: () => void;
   onOpen: () => void;
@@ -486,9 +481,10 @@ function PhotoCard({
   const [burstId, setBurstId] = useState<number | null>(null);
 
   const handleTap = useDoubleTap(() => {
+    if (item.pending) return;
     if (!liked) onLike();
     setBurstId((id) => (id ?? 0) + 1);
-  }, onOpen);
+  }, item.pending ? undefined : onOpen);
 
   return (
     <button
@@ -497,12 +493,19 @@ function PhotoCard({
       aria-label="Open photo"
       className="relative aspect-square overflow-hidden bg-muted"
     >
-      <img
+      <Image
         src={item.imageUrl}
         alt={item.caption ?? "Shared moment"}
-        loading="lazy"
-        className="h-full w-full select-none object-cover"
+        fill
+        sizes="33vw"
+        unoptimized={item.pending}
+        className="select-none object-cover object-top"
       />
+      {item.pending && (
+        <div className="absolute inset-0 flex items-center justify-center bg-black/25">
+          <Loader2 className="size-5 animate-spin text-white" />
+        </div>
+      )}
       {burstId !== null && (
         <Heart
           key={burstId}

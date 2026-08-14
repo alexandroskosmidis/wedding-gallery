@@ -21,6 +21,8 @@ export type Photo = {
   caption: string | null;
   time: Timestamp | null;
   likes: number;
+  width: number | null;
+  height: number | null;
 };
 
 const photosQuery = query(collection(db, "photos"), orderBy("time", "desc"));
@@ -37,15 +39,30 @@ export function subscribeToPhotos(onChange: (photos: Photo[]) => void) {
           caption: (data.caption as string | undefined) ?? null,
           time: (data.time as Timestamp | undefined) ?? null,
           likes: (data.likes as number | undefined) ?? 0,
+          width: (data.width as number | undefined) ?? null,
+          height: (data.height as number | undefined) ?? null,
         };
       }),
     );
   });
 }
 
+async function getImageDimensions(file: File): Promise<{ width: number; height: number } | null> {
+  try {
+    const bitmap = await createImageBitmap(file);
+    const dimensions = { width: bitmap.width, height: bitmap.height };
+    bitmap.close();
+    return dimensions;
+  } catch {
+    return null;
+  }
+}
+
 export async function uploadPhoto(file: File) {
   const photoRef = doc(collection(db, "photos"));
   const storagePath = `photos/${photoRef.id}-${file.name}`;
+
+  const dimensions = await getImageDimensions(file);
 
   await uploadBytes(ref(storage, storagePath), file);
   const imageUrl = await getDownloadURL(ref(storage, storagePath));
@@ -57,6 +74,8 @@ export async function uploadPhoto(file: File) {
     caption,
     time: serverTimestamp(),
     likes: 0,
+    width: dimensions?.width ?? null,
+    height: dimensions?.height ?? null,
   });
 }
 
