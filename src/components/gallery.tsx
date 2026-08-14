@@ -66,11 +66,6 @@ export function Gallery() {
   };
 
   const uploadWithToast = (file: File, id: string) => {
-    toast.loading("Uploading…", {
-      icon: <Loader2 className="size-4 animate-spin text-primary" />,
-      id,
-    });
-
     return uploadPhoto(file)
       .then(() => {
         toast.success("Moment added", { id });
