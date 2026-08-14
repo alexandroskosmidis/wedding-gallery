@@ -65,25 +65,29 @@ export function Gallery() {
     });
   };
 
-  const uploadWithToast = (file: File, id: string) => {
+  const uploadWithToast = (file: File, id: string, silentSuccess?: boolean) => {
     return uploadPhoto(file)
       .then(() => {
-        toast.success("Moment added", { id });
+        if (!silentSuccess) {
+          toast.success("Moment added", { id });
+        }
+        return true;
       })
       .catch(() => {
         toast.error("Upload failed, please try again", { id });
+        return false;
       });
   };
 
   // Shows the picked photo in the grid immediately via a local blob URL, while
   // the real upload happens in the background. The placeholder is removed once
   // the upload settles — the real photo takes over via the Firestore listener.
-  const startOptimisticUpload = (file: File, id: string) => {
+  const startOptimisticUpload = (file: File, id: string, silentSuccess?: boolean) => {
     const tempId = `pending-${id}`;
     const blobUrl = URL.createObjectURL(file);
     setPendingUploads((prev) => [...prev, { tempId, blobUrl }]);
 
-    return uploadWithToast(file, id).finally(() => {
+    return uploadWithToast(file, id, silentSuccess).finally(() => {
       setPendingUploads((prev) => prev.filter((p) => p.tempId !== tempId));
       URL.revokeObjectURL(blobUrl);
     });
@@ -112,8 +116,15 @@ export function Gallery() {
       return;
     }
 
-    selected.forEach((file, i) => {
-      startOptimisticUpload(file, `upload-${i}-${file.name}`);
+    const uploads = selected.map((file, i) =>
+      startOptimisticUpload(file, `upload-${i}-${file.name}`, true),
+    );
+
+    Promise.all(uploads).then((results) => {
+      const succeeded = results.filter(Boolean).length;
+      if (succeeded > 0) {
+        toast.success(succeeded === 1 ? "Moment added" : `${succeeded} moments added`);
+      }
     });
   };
 
@@ -156,7 +167,10 @@ export function Gallery() {
           <UploadHero
             uploading={uploading}
             onCamera={() => cameraInputRef.current?.click()}
-            onGallery={() => galleryInputRef.current?.click()}
+            onGallery={() => {
+              toast.info(`Select up to ${MAX_FILES_PER_UPLOAD} photos at once`);
+              galleryInputRef.current?.click();
+            }}
           />
           {loaded && displayPhotos.length === 0 ? (
             <p className="py-10 text-center text-sm text-muted-foreground">
